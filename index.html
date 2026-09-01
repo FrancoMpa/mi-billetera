@@ -166,6 +166,39 @@
   .empty-state .display{ font-size: 20px; color: var(--text); margin-bottom: 6px; }
   .empty-state p{ font-size: 13.5px; line-height: 1.5; }
 
+  /* alert banner */
+  .alert-banner{
+    background: var(--expense-soft); border: 1px solid rgba(209,122,99,0.35);
+    border-radius: var(--radius-md); padding: 14px 16px; margin-bottom: 16px;
+  }
+  .alert-banner .alert-title{
+    font-size: 13px; color: var(--expense); font-weight: 600; margin-bottom: 8px;
+  }
+  .alert-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .alert-row + .alert-row{ margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(209,122,99,0.2); }
+  .alert-row .a-name{ font-size: 14px; font-weight: 500; }
+  .alert-row .a-when{ font-size: 12px; color: var(--expense); }
+  .alert-row .a-amount{ font-size: 14px; font-weight: 600; color: var(--expense); white-space:nowrap; }
+
+  /* reminders list */
+  .reminder-entry{
+    display:flex; align-items:center; gap: 12px;
+    padding: 12px 4px; border-bottom: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .reminder-entry:last-child{ border-bottom: none; }
+  .reminder-day{
+    width: 42px; height: 42px; border-radius: 11px; flex-shrink:0;
+    background: var(--surface-2); border: 1px solid var(--border);
+    display:flex; align-items:center; justify-content:center;
+    font-family: 'Fraunces', serif; font-weight: 600; font-size: 15px; color: var(--gold-soft);
+  }
+  .reminder-info{ flex:1; min-width:0; }
+  .reminder-name{ font-size: 14.5px; font-weight: 500; }
+  .reminder-sub{ font-size: 12.5px; color: var(--text-dim); margin-top: 2px; }
+  .reminder-sub.due{ color: var(--expense); font-weight: 500; }
+  .reminder-amount{ font-size: 14px; font-weight: 600; color: var(--text-dim); white-space:nowrap; }
+
   /* overlay + sheet */
   .overlay{
     position: fixed; inset:0; background: rgba(0,0,0,0.55);
@@ -238,11 +271,12 @@
     income: ['Sueldo','Freelance','Regalo','Otros']
   };
 
-  let state = { initial: null, transactions: [] };
+  let state = { initial: null, transactions: [], reminders: [] };
   let period = 'today'; // today | week | month
   let sheetMode = null; // 'add' | 'edit' | null
   let sheetType = 'expense';
   let editingId = null;
+  let editingReminderId = null;
   let storageOk = true;
 
   const el = id => document.getElementById(id);
@@ -276,6 +310,7 @@
     }catch(e){
       storageOk = true; // la clave simplemente no existe todavía
     }
+    if(!Array.isArray(state.reminders)) state.reminders = [];
   }
 
   async function saveData(){
@@ -362,6 +397,36 @@
     return d.toISOString().slice(0,10);
   }
 
+  // Devuelve una fecha válida para "día" dentro de un mes dado,
+  // usando el último día del mes si ese mes tiene menos días (ej. 31 en febrero).
+  function clampedDate(year, month, day){
+    const lastDay = new Date(year, month + 1, 0).getDate();
+    return new Date(year, month, Math.min(day, lastDay));
+  }
+
+  function daysUntilDay(day){
+    const now = new Date(); now.setHours(0,0,0,0);
+    let target = clampedDate(now.getFullYear(), now.getMonth(), day);
+    if(target < now){
+      let m = now.getMonth() + 1, y = now.getFullYear();
+      if(m > 11){ m = 0; y++; }
+      target = clampedDate(y, m, day);
+    }
+    return Math.round((target - now) / 86400000);
+  }
+
+  function reminderStatusLabel(diff){
+    if(diff === 0) return 'Vence hoy';
+    if(diff === 1) return 'Vence mañana';
+    return `Faltan ${diff} días`;
+  }
+
+  function sortedReminders(){
+    return [...state.reminders]
+      .map(r => ({ ...r, diff: daysUntilDay(r.day) }))
+      .sort((a, b) => a.diff - b.diff);
+  }
+
   // ---------- render ----------
   function render(){
     const app = el('app');
@@ -434,11 +499,50 @@
       }).join('');
     }
 
+    const reminders = sortedReminders();
+    const dueSoon = reminders.filter(r => r.diff <= 3);
+
+    let bannerHtml = '';
+    if(dueSoon.length > 0){
+      bannerHtml = `
+        <div class="alert-banner">
+          <div class="alert-title">Por vencer</div>
+          ${dueSoon.map(r => `
+            <div class="alert-row">
+              <div>
+                <div class="a-name">${escapeHtml(r.name)}</div>
+                <div class="a-when">${reminderStatusLabel(r.diff)}</div>
+              </div>
+              ${r.amount ? `<div class="a-amount">${money(r.amount)}</div>` : ''}
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    let remindersHtml = '';
+    if(reminders.length === 0){
+      remindersHtml = `<p style="font-size:13px;color:var(--text-dim);padding:4px 4px 20px;">Aún no tienes pagos recurrentes registrados.</p>`;
+    } else {
+      remindersHtml = reminders.map(r => `
+        <div class="reminder-entry" data-id="${r.id}">
+          <div class="reminder-day">${r.day}</div>
+          <div class="reminder-info">
+            <div class="reminder-name">${escapeHtml(r.name)}</div>
+            <div class="reminder-sub ${r.diff <= 3 ? 'due' : ''}">${reminderStatusLabel(r.diff)}</div>
+          </div>
+          ${r.amount ? `<div class="reminder-amount">${money(r.amount)}</div>` : ''}
+        </div>
+      `).join('');
+    }
+
     return `
       <div class="topbar">
         <div class="name display">Billetera</div>
         <div class="icon-btn" id="settings-btn" title="Ajustar saldo">&#9881;</div>
       </div>
+
+      ${bannerHtml}
 
       <div class="balance-card">
         <div class="balance-label">Saldo actual</div>
@@ -466,6 +570,12 @@
       </div>
 
       <div class="section-title">
+        <span>Recordatorios</span>
+        <div class="icon-btn" id="add-reminder-btn" title="Nuevo recordatorio" style="width:28px;height:28px;font-size:14px;">+</div>
+      </div>
+      ${remindersHtml}
+
+      <div class="section-title" style="margin-top:8px;">
         <span>Movimientos</span>
         <span class="count">${state.transactions.length}</span>
       </div>
@@ -485,6 +595,7 @@
     el('btn-add-income').onclick = () => openSheet('add', 'income');
     el('btn-add-expense').onclick = () => openSheet('add', 'expense');
     el('settings-btn').onclick = () => openSettingsSheet();
+    el('add-reminder-btn').onclick = () => openReminderSheet('add');
 
     document.querySelectorAll('.period-tab').forEach(t => {
       t.onclick = () => { period = t.dataset.p; render(); };
@@ -492,6 +603,10 @@
 
     document.querySelectorAll('.entry').forEach(row => {
       row.onclick = () => openSheet('edit', null, row.dataset.id);
+    });
+
+    document.querySelectorAll('.reminder-entry').forEach(row => {
+      row.onclick = () => openReminderSheet('edit', row.dataset.id);
     });
   }
 
@@ -607,6 +722,70 @@
     el('btn-save2').onclick = async () => {
       const v = parseFloat(el('f-init').value);
       state.initial = isNaN(v) ? 0 : v;
+      await saveData();
+      closeOverlay();
+      render();
+    };
+  }
+
+  function openReminderSheet(mode, id){
+    let rem = null;
+    if(mode === 'edit'){
+      rem = state.reminders.find(r => r.id === id);
+      if(!rem) return;
+      editingReminderId = id;
+    } else {
+      editingReminderId = null;
+    }
+
+    const name = rem ? rem.name : '';
+    const day = rem ? rem.day : '';
+    const amount = rem ? (rem.amount || '') : '';
+
+    const html = `
+      <div class="sheet">
+        <div class="sheet-title">${mode === 'edit' ? 'Editar recordatorio' : 'Nuevo recordatorio'}</div>
+        <div class="field">
+          <label for="r-name">Nombre</label>
+          <input id="r-name" type="text" placeholder="Ej. Línea telefónica" value="${escapeHtml(name)}">
+        </div>
+        <div class="field">
+          <label for="r-day">Día del mes en que vence (1 al 31)</label>
+          <input id="r-day" type="number" inputmode="numeric" min="1" max="31" placeholder="Ej. 10" value="${day}">
+        </div>
+        <div class="field">
+          <label for="r-amount">Monto aproximado (S/), opcional</label>
+          <input id="r-amount" class="amount-input" type="number" inputmode="decimal" step="0.01" placeholder="0.00" value="${amount}">
+        </div>
+        <div class="sheet-actions">
+          ${mode==='edit' ? `<button class="btn danger" id="btn-delete-rem">Eliminar</button>` : `<button class="btn ghost" id="btn-cancel-rem">Cancelar</button>`}
+          <button class="btn primary" id="btn-save-rem">Guardar</button>
+        </div>
+      </div>
+    `;
+    openOverlay(html);
+
+    if(el('btn-cancel-rem')) el('btn-cancel-rem').onclick = closeOverlay;
+    if(el('btn-delete-rem')) el('btn-delete-rem').onclick = async () => {
+      state.reminders = state.reminders.filter(r => r.id !== editingReminderId);
+      await saveData();
+      closeOverlay();
+      render();
+    };
+    el('btn-save-rem').onclick = async () => {
+      const nm = el('r-name').value.trim();
+      let dy = parseInt(el('r-day').value, 10);
+      const amt = parseFloat(el('r-amount').value);
+
+      if(!nm){ el('r-name').focus(); return; }
+      if(isNaN(dy) || dy < 1 || dy > 31){ el('r-day').focus(); return; }
+
+      if(mode === 'edit'){
+        const rem = state.reminders.find(r => r.id === editingReminderId);
+        rem.name = nm; rem.day = dy; rem.amount = isNaN(amt) ? null : amt;
+      } else {
+        state.reminders.push({ id: uid(), name: nm, day: dy, amount: isNaN(amt) ? null : amt });
+      }
       await saveData();
       closeOverlay();
       render();
